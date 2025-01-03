@@ -1,0 +1,420 @@
+\documentclass{article}
+\documentclass[preprint,11pt]{elsarticle}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{natbib}
+\usepackage{hyperref}
+\usepackage{authblk}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{multicol} 
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[style=numeric]{biblatex}
+\addbibresource{ref.bib}
+\usepackage[colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue]{hyperref}
+% \renewcommand{\refname}{\centering REFERENCES}
+
+
+\title{
+\rule{\linewidth}{1mm} \\[0.7cm]
+\textbf{Sparsity in Continuous-Depth Neural Networks} \\[0.7cm]
+\rule{\linewidth}{0.5mm} 
+}
+
+\author{
+\small
+\begin{tabular}{c c c}
+\makebox[0.2\textwidth][c]{\textbf{Hananeh Aliee}} & 
+\makebox[0.3\textwidth][c]{\textbf{Till Richter}} & 
+\makebox[0.3\textwidth][c]{\textbf{Mikhail Solonin\thanks{Work done while at TUM. MS is currently employed by J.P. Morgan Chase & Co.; \\ \texttt{ 
+  \hspace{5pt} mikhail.solonin@jpmorgan.com \vspace{20pt} \\  \quad 36th Conference on Neural Information Processing Systems (NeurIPS 2022)}}}} \\
+\makebox[0.2\textwidth][c]{Helmholtz Munich} & 
+\makebox[0.3\textwidth][c]{Helmholtz Munich} & 
+\makebox[0.3\textwidth][c]{Technical University of Munich} \\
+\vspace{20pt} % Reduced space between sections
+\makebox[0.2\textwidth][c]{\textbf{Ignacio Ibarra}} & 
+\makebox[0.3\textwidth][c]{\textbf{Fabian Theis}} & 
+\makebox[0.3\textwidth][c]{\textbf{Niki Kilbertus}} \\
+\makebox[0.2\textwidth][c]{Helmholtz Munich} & 
+\makebox[0.3\textwidth][c]{Technical University of Munich} & 
+\makebox[0.3\textwidth][c]{Technical University of Munich} \\
+\makebox[0.2\textwidth][c]{} & 
+\makebox[0.3\textwidth][c]{Helmholtz Munich} & 
+\makebox[0.3\textwidth][c]{Helmholtz AI, Munich}
+\end{tabular}
+}
+
+
+\affil[ ]{
+    \texttt{
+        \{hananeh.aliee, till.richter, ignacio.ibarra, fabian.theis, niki.kilbertus\}
+    } 
+    \vspace{5pt} 
+    \texttt{@helmholtz-muenchen.de}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Neural Ordinary Differential Equations (NODEs) have proven successful in learning dynamical systems in terms of accurately recovering the observed trajectories. While different types of sparsity have been proposed to improve robustness, the generalization properties of NODEs for dynamical systems beyond the observed data are underexplored. We systematically study the influence of weight and feature sparsity on forecasting as well as on identifying the underlying dynamical laws. Besides assessing existing methods, we propose a regularization technique to sparsify ``input-output connections" and extract relevant features during training. Moreover, we curate real-world datasets consisting of human motion capture and human hematopoiesis single-cell RNA-seq data to realistically analyze different levels of out-of-distribution (OOD) generalization in forecasting and dynamics identification respectively. Our extensive empirical evaluation on these challenging benchmarks suggests that weight sparsity improves generalization in the presence of noise or irregular sampling. However, it does not prevent learning spurious feature dependencies in the inferred dynamics, rendering them impractical for predictions under interventions, or for inferring the true underlying dynamics. Instead, feature sparsity can indeed help with recovering sparse ground-truth dynamics compared to unregularized NODEs.
+\end{abstract}
+\vspace{40pt}
+\section{Introduction}
+
+\begin{minipage}{0.5\textwidth}
+This paper explores the role of sparsity in Neural Ordinary Differential Equations (NODEs) for modeling dynamical systems. While extreme over-parameterization contributes to the success of deep neural networks, it can lead to increased computational costs. Sparse neural networks offer benefits like imitating human learning, enhancing computational efficiency, and improving interpretability. The study focuses on two types of sparsity: weight sparsity, which reduces computational needs, and feature sparsity, which can enhance the identification of underlying dynamical laws. The authors introduce a novel regularization technique, PathReg2, which promotes both weight and feature sparsity. They also evaluate the performance of various sparsity methods using real-world datasets, aiming to assess their impact on out-of-distribution generalization for prediction and dynamical law inference.
+\end{minipage}
+\hfill
+\begin{minipage}{0.45\textwidth}
+\centering
+\includegraphics[width=\linewidth, height=0.3\textheight]{f1.png} % Adjust height as needed
+\captionof{\textbf{Figure 1: }}{\textbf{Model vs feature sparsity}}
+\label{fig:sparsity}
+\end{minipage}
+
+
+\section{Background}
+    \subsection{Continuous-depth neural nets}
+    Among the plethora of deep learning based methods to estimate dynamical systems from data
+    \cite{Bolstad_2011},\cite{bartoldson2020generalizationstability},\cite{Aalto2020},\cite{Arnab20}, we focus on Neural Ordinary Differential Equations (NODEs). In NODEs, a neural
+    network with parameters $\theta$  is used to learn the function $f_{\theta} \approx f$
+    from data, where f defines a (first
+    order) ODE in its explicit representation \textit{$\dot{X}$} = \textit{f}(X, \textit{t}) \cite{Allen-Zhu18}. Starting from the initial observation \textit{X(a)}
+    at some time \textit{t = a}, an explicit iterative ODE solver is deployed to predict \textit{X(t)} for \textit{t $\in$ (a, b]} using
+    the current derivative estimates from $f_{\theta}$. The parameters $\theta$ are then updated via backpropagation
+    on the mean squared error (MSE) between predictions and observations. As discussed extensively
+    in the literature, NODEs can outperform traditional ODE parameter inference techniques in terms
+    of reconstruction error, especially for non-linear dynamics \textit{f} \cite{Deen2021},\cite{chen2020learning}. In particular, one advantage
+    of NODEs over previous methods for inferring non-linear dynamics such as SINDy \cite{mooij2013ordinary} is that no
+    dictionary of non-linear basis functions has to be pre-specified.
+    A variant of NODEs for second order systems called SONODE exploits the common reduction
+    of higher-order ODEs to first order systems \cite{Du18}. The second required initial condition, the initial
+    velocity \textit{$\dot{X}$(a)}, is simply learned from \textit{X(a)} via another neural network in an end-to-end fashion. Our
+    experiments build on the public NODE and SONODE implementations. However, our framework
+    is readily applicable to most other continuous-depth neural nets including Augmented NODE \cite{Arnab20},
+    latent NODEs \cite{Aalto2020}, and neural stochastic DEs \cite{hoefler2021sparsity},\cite{Zheng18}
+
+    
+    \subsection{Sparsity and generalization}
+    Two prominent motivations for enforcing sparsity in over-parameterized deep learning models are
+    (a) pruning large networks for efficiency (speed, memory), (b) as a regularizer that can improve
+    interpretability or prevent overfitting. In both cases, one aims at preserving (as much as possible)
+    i.i.d. generalization performance, i.e., performance on unseen data from the same distribution as the
+    training data, compared to a non-sparse model \cite{Lambert2018-nc}.
+    Another line of research has explored the link between generalizability of neural nets and causal
+    learning \cite{xu2022sparse}, where generalization outside the i.i.d. setting, is conjectured to require an underlying
+    \textit{causal model}. Deducing true laws of nature purely from observational data could be considered an
+    instance of inferring a causal model of the world. Learning the correct causal model enables accurate
+    predictions not only on the observed data (next observation), but also under distribution shifts for
+    example under interventions \cite{Micci2013}. A common assumption in causal modeling is that each variable
+    depends on (or is a function of) few other variables \cite{Du18},\cite{Wolf2018},\cite{xu2021characteristic}. In the ODE context, we interpret
+    the variables (or their derivatives) that enter a specific component \textit{$f_{i}$}
+  as causal parents, such that we
+    can write $\dot{X}_i = f(pa(X_i), t)$
+ \cite{pal2021opening}. Thus, feature sparsity translates to     each variable \textit{$X_{i}$} having only
+    few parents \textit{pa}(\textit{$X_{i}$}), which can also be interpreted as asking for “simple” dynamics. Since weight
+    sparsity as well as regularizing the number of function evaluations in NODEs can also be considered
+    to bias them towards “simpler dynamics”, these notions are      not strictly disjoint, raising the question
+    whether one implies the other.
+    In terms of feature sparsity, Aliee et al.\cite{Liu2022}, Bellot et al. \cite{Micci2013} study system identification and causal
+    structure inference from time-series data using NODEs. They suggest that enforcing sparsity in
+    the number of causal interactions improves parameter estimation as well as predictions under in terventions. Let us write out $f_{\theta}$ as a fully connected net with \textit{L} hidden layers parameterized by
+    $\theta := (W^l, b^l)_{l=1}^{L+1}$ as\\
+    \vspace{5pt}
+    \[
+f_{\theta}(X) = W^{L+1} \sigma\left(\ldots \sigma\left(W^{2} \sigma\left(W^{1} X + b^{1}\right) + b^{2}\right) \ldots\right) \tag{1}
+\]
+
+    with element-wise activation function $\sigma$, \textit{l}-th layer weights $W^{1}$
+    , and biases $b^{l}$
+    . Aliee et al. \cite{Bolstad_2011} then
+    seek to reduce the overall number of parents of all variables by attempting to cancel all contributions
+    of a given input on a given output node through the neural net. In a linear setting, where $\sigma$\textit{(x) = x},
+    the regularization term is defined $by^{3}$ \\
+    
+     \[
+    \|A\|_{1,1} = \|W^{L+1} \cdots W^{1}\|_{1,1} \tag{2}
+    \]
+
+
+    where $A_{ij}$ = 0 if and only if the \textit{i}-th output is constant in the \textit{j}-th input. In the non-linear setting,
+    for certain $\sigma$\textit{(x) $\neq $ x}, the regularizer $\|A\|_{1,1} = \|W^{L+1} \cdots W^{1}\|_{1,1}$ (with entry wise absolute
+    values on all $W^{l}$
+    ) is an upper bound on the number of input-output dependencies, i.e., for each
+    output \textit{i} summing up all the inputs \textit{j} it is not constant in. Regularizing input gradients \cite{maddison2017the},\cite{kelly2020easynode},\cite{Hasani_Lechner_Amini_Rus_Grosu_2021}is
+    another alternative to train neural networks that depend on fewer inputs, however it is not scalable to
+    high-dimensional regression tasks.
+    Bellot et al. \cite{NIPS2017_9ef2ed4b} instead train a separate neural net $f_{\theta, i}: \mathbb{R}^n \rightarrow \mathbb{R}$
+     for each variable \textit{$X_{i}$} and penalize
+    NODEs using GroupLasso on the inputs via
+    \[
+    \sum_{k,i=1}^{n} \left\|\left[W_i^1\right]_{\cdot,k}\right\|_2 \tag{3} 
+    \]
+
+    where $W^{1}_{i}$
+    is the weight matrix in the input layer of $f_{i}$ and $[W^{1}_{i}].,_{k}]
+    $ refers to the \textit{k}
+    th column of
+   $ W^{1}_{i}$
+    that should simultaneously (as a group) be set to zero or not. While enforcing strict feature
+    sparsity (instead of regularizing an upper bound), parallel training of multiple NODE networks can
+    be computationally expensive (Figure 1, bottom). While this work suggests that sparsity of causal
+    interactions helps system identification, its empirical evaluation predominantly focuses on synthetic
+    data settings, leaving performance on real data underexplored.
+    Another recent work suggests that standard weight or neuron pruning improves generalization for
+    NODEs \cite{Liu2022}. The authors show that pruning lowers empirical risk in density estimation tasks and
+    decreases Hessian’s eigenvalues, thus obtaining better generalization (flat minima). However, the
+    effect of sparsity on identifying the underlying dynamics as well as the generalization properties of
+    NODEs to forecast future values are not assessed.
+\section{Sparsification of neural ODEs}
+In an attempt to combine the strengths of both weight and feature sparsity, we propose a new
+regularization technique, called PathReg, which compares favorably to both C-NODE \cite{Aalto2020} and
+GroupLasso \cite{Montavon2019}. Before introducing PathReg, we describe how to extend existing methods to NODEs
+for an exhaustive empirical evaluation.
+    \subsection{Methods}
+   \textbf{ L0 regularization.} Inspired by [31], we use a \textit{differentiable} L0 norm regularization method that
+    can be incorporated in the objective function and optimized via stochastic gradient descent. The L0
+    regularizer prunes the network during training by encouraging weights to get \textit{exactly zero} using a set
+    of non-negative stochastic gates \textit{z}. For an efficient gradient-based optimization, Louizos et al. \cite{QIU2020265}
+    propose to use a continuous random variable s with distribution \textit{q(s)} and parameters $\phi$, where \textit{z} is
+    then given by
+    \[
+s \sim q(s \mid \Phi), \quad z = \min(1, \max(0, s)) \tag{4}
+\]
+
+    Gate z is a hard-sigmoid rectification of $s^{2}$
+    that allows the gate to be exactly zero. While we have the
+    freedom to choose any smoothing distribution \textit{q(s)}, we use binary concrete distribution \cite{louizos2018learning},\cite{kingma2017adam} as
+    suggested by the original work \cite{Zhang16}. The regularization term is then defined as the probability of \textit{s}
+    being positive
+    \[
+q(z \neq 0 \mid \phi) = 1 - Q(s \leq 0 \mid \phi) \tag{5}
+\]
+
+    where Q is the cumulative distribution function of \textit{s}. Minimizing the regularizer pushes many gates
+    to be zero, which implies weight sparsity as these gates are multiplied with model weights. L0
+    regularization can be added directly to the NODE network $f_{\theta}$.\\
+    \textbf{LassoNet} is a feature selection method [26] that uses an input-to-output skip (residual) connection
+    that allows a feature to participate in a hidden unit only if its skip connection is active. LassoNet can
+    be thought of as a residual feed-forward neural net $Y = S^T X + h_{\theta}(X)$
+    , where $h_{\theta}$ denotes another
+    feed-forward network with parameters $0, S \in \mathbb{R}^{n \times n}$
+     refers to the weights in the residual layer, and \textit{Y}
+    are the responses. To enforce feature sparsity, L1 regularization is applied to the weights of the skip
+    connection, defined as $\|S\|_{1,1}$ (where $\|.\|_{1,1}$ denotes the element-wise L1 norm). A constraint term
+    with factor \textit{p} is then added to the objective to budget the non-linearity involved for feature k relative
+    to the importance of $X_{k}$
+   \[
+    \min_{\theta, S} \mathcal{L}_{\mathcal{D}}(\theta, S) + \lambda \|S\|_{1,1} \\
+    \text{subject to } \left\| \left[W^1 \right]_{\cdot, k} \right\|_{\infty} \leq \rho \left\| \left[S \right]_{\cdot, k} \right\|_{2} \quad \text{for } k \in \{1, \dots, n\}, \tag{6}
+    \]
+
+    where $[W^1
+    ].,_{k}$ denotes the \textit{k}
+    th column of the first layer weights of $h_{\theta}$, and $[S]_{·,k}$ represents the \textit{ k}
+    th
+    column of \textit{S}. When $\rho$ = 0, only the skip connection remains (standard linear Lasso), while $\rho$ → $\infty$
+    corresponds to unregularized network training.
+    \setcounter{figure}{1}
+    \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\linewidth]{f2.png}
+    \caption{The distributions of network weights and paths weights (over the entries of the matrix in
+    Eq. 13) using PathReg applied to single-cell data in Section 4.3. PathReg increases both model and
+    feature sparsity}
+    \label{fig:f2}
+    \end{figure}
+
+    LassoNet regularization can be extended to NODEs by adding the skip connection either before or
+    after the integration (the ODE solver). If added before the integration, which we call Inner LassoNet,
+    a linear function of \textit{X} is added to its time derivative
+   \[
+  \dot{X} = S^T X + f_{\theta}(X, t), \quad X(0) = x_0 \tag{7}
+ \]
+
+    Adding the skip connection after the integration (and the predictor \textit{o}), called Outer LassoNet, yields
+    \[
+    X_t = S^T X_t + b(\text{ODESolver}(f_{\theta}, x_0, t_0, t)) \tag{8}
+    \]
+
+   \textbf{ PathReg (ours).} While L0 regularization minimizes the number of non-zero weights in a network, it
+    does not necessarily lead to feature sparsity meaning that the response variables can still depend on
+    all features including spurious ones. To constrain the number of input-output paths, i.e., to enforce
+    feature-sparsity, we regularize the probability of any path throughout the entire network contributing
+    to an output. To this end, we use non-negative stochastic gates \textit{z = g(s)} similar to Eq. 4, where the
+    probability of an input-output path \textit{P} being non-zero is given by
+    \[
+    q(\textit{P} \neq 0) = \prod_{i=1}^{n} q(z_i \neq 0 \mid \phi) \tag{9}
+   \]
+
+    and we constrain
+    \[
+\sum_{i=1}^{\#\text{paths}} \prod_{z \in P_i} q(z \neq 0 \mid \phi) \tag{10} 
+\]
+
+    to minimize the number of paths that yield non-zero contributions from inputs to outputs. This is
+    equivalent to regularizing the \textit{gate adjacency matrix} $A_{z} = G^{L+1}...G^{1}$
+    . Where $G^{l}$
+    is a probability
+    matrix corresponding to the probability of the \textit{l}-th layer gates being positive. Then, $A_{zij}$ represents
+    the sum of the probabilities of all paths between the \textit{i}-th input and the \textit{j}-th output. Ultimately, we
+    thus obtain our PathReg regularization term
+    \[
+\|A_z\|_{1,1} = \|G^{L+1} \cdots G^{1}\|_{1,1} \text{ with } G_{ij}^l = q(z_{ij} \neq 0 \mid \phi_i), \tag{11}
+\]
+
+    where $q^{l}
+    (z_{ij}\neq 0)$ with parameters $\phi _{i,j}$ is the probability of the \textit{l}-th layer gate $z_{ij}$ being nonzero.
+    Regularizing $\|A_z\|_{1,1}$, minimizes the number of paths between inputs and outputs and induces no
+    shrinkage on the actual values of the weights. Therefore, we can utilize other regularizers on $\theta$ such
+    as $\|A\|_{1,1}$ in conjunction with PathReg similar to Eq. 2. In this work, we consider the following
+    overall loss function
+    \[
+    \mathcal{R}(\theta, \Phi) = \mathbb{E}_{q(s|\Phi)}\left[-\frac{1}{N}\sum_{i=1}^{N} \mathcal{L}(\sigma(f(x_i; \theta) + s), y_i)\right] + \lambda_0 \|A_z\|_{1,1} + \lambda_1 \|A\|_{1,1}
+    \]
+    \[
+    = \mathcal{L}_{\mathcal{E}}(\theta, \Phi) + \lambda_0 \|A_z\|_{1,1} + \lambda_1 \|A\|_{1,1} \tag{12}
+    \]
+
+   \begin{table}[ht]
+\centering
+\caption{Results for the synthetic second-order ODE}
+\vspace{0.5em} % Adds gap between caption and table
+\resizebox{0.8\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\hline
+ & \multicolumn{2}{c}{MSE} & \multicolumn{2}{c}{SPARSITY (\%)} \\
+\cline{2-3} \cline{4-5} % Adds partial horizontal lines under MSE and SPARSITY
+MODEL & TRAIN & EXTRAPOLATION & FEATURES & WEIGHTS \\
+\hline
+BASE & 1.3 $\times 10^{-4}$ & 3.2 $\times 10^{-3}$ & 47.9 & 11.1 \\
+LO & 1.9 $\times 10^{-2}$ & 3.3 $\times 10^{-2}$ & 0.0 & \textbf{49.6} \\
+C-NODE & 6.6 $\times 10^{-5}$ & 4.1 $\times 10^{-4}$ & \textbf{ 75.5} & 16.7 \\
+PATHREG & \textbf{6.3 $\times 10^{-5}$} & \textbf{3.9 $\times 10^{-4}$} & \textbf{75.5} & 35.2 \\
+LASSONET & 8.4 $\times 10^{-3}$ & 4.0 $\times 10^{-2}$ & 0.0 & 0.0 \\
+GROUPLASSO & 8.8 $\times 10^{-5}$ & 1.5 $\times 10^{-3}$ & 61.1 & 6.0 \\
+\hline
+\end{tabular}%
+}
+\end{table}
+
+    
+    fits the current dataset. While ∥A∥1,1 shrinks the actual values of weights $\theta$ in an attempt to zero out
+    entire paths, $\|A_z\|_{1,1}$ enforces exact zeros for entire paths at once. When $\|A_z\|_{1,1}$= 0 the output i is
+    constant in input j. In practice, during training the expectation in Eq. 12 is estimated as usual via
+    Monte Carlo sampling.
+    Unlike GroupLasso \cite{Ross17}, PathReg does not require training of multiple networks in parallel. Moreover,
+    unlike C-NODE \cite{mu2019mnistc}, PathReg leads to exact zeros in the weight matrices and requires no choice of
+    threshold for deciding which paths are considered as zeros (see Figure 2)
+\section{Results}
+In this section, we present empirical results on several datasets from different domains including
+human motion capture data and large-scale single-cell RNA-seq data. We demonstrate the effect of
+the different sparsity methods including L0 \cite{neyshabur2018understanding}, C-NODE \cite{Zhang16}, LassoNet \cite{Ng20}, GroupLasso \cite{Micci2013}, and
+our PathReg on the generalization capability of continuous-depth neural nets. We address different
+aspects of generalization by assessing the accuracy of these models for time-series forecasting and
+the identification of the governing dynamical laws. In all examples, we assume that the observed
+motion can be (approximately) described by a system of ODEs where variables correspond directly
+to the observables of the trajectories.
+    \setcounter{subsection}{1}
+    \subsection{Sparsity improves time-series forecasting}
+    \begin{minipage}{0.5\textwidth}
+    We next demonstrate the robustness of sparse models for both reconstructing and extrapolating human movements using real motion capture data from mocap.cs.cmu.edu. Each
+    datapoint is 93-dimensional (31 joint locations with three dimensions each) captured over
+    time. We select three different movements including walking, waving, and golfing, and use
+    100 frames each for training. After training, we query all models to extrapolate the next
+    100 frames. For walking and golfing, where multiple trials are available, we also test the
+    model on unseen data in the sense that it has not seen any subset of those specific sequences (despite having trained on other sequences depicting the same type of movement).
+    train	data
+    extrapolation
+    PathReg
+    Base
+    PathReg
+    Base
+    test	data  extrapolation.
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.45\textwidth}
+    \centering
+    \includegraphics[width=\linewidth, height=0.3\textheight]{f4.png} % Adjust height as needed
+    \captionof{\textbf{Figure 4: }}{\textbf{Human-movement reconstructions and
+extrapolation}}
+    \label{fig:sparsity}
+    \end{minipage}
+    \vspace{20pt}
+    
+   
+    Generally, for time-series forecasting, it is not
+    straight forward to give precise definitions of
+    in-, and out-of-distribution. In Table 7 in Appendix C, we show a grid of plots illustrating
+    loss and sparsity as a function of the regularization parameter λ of each method on this
+    dataset. We show detailed results in Table 3
+    in Appendix C and summarize them concisely
+    in Figure 3. We did not manage to scale GroupLasso to this 93-dimensional dataset. While
+    all other models show comparative performance
+    (in terms of MSE error), only PathReg achieves
+    strong levels of both weight and feature sparsity
+    (quantitative comparison is in Table 3). The results show that PathReg outperforms other meth
+    \setcounter{figure}{4}
+    \begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\linewidth]{f5.png}
+    \caption{Single-cell RNA-seq Data. Shown are 2D UMAP visualisation of training data colored
+    by cell types and pseudotime (top) where each point is a cell, and the expressions of three genes
+    and their predictions over pseudo time using C-NODE (top) and PathReg (bottom). The predictions
+    across all genes are presented in Figure 9.
+    }
+    \label{fig:f5}
+    \end{figure}
+    
+    ods with respect to MSE for both train and test datasets while resulting in the highest model and
+    feature sparsity.
+    We further examine the extrapolation (in time) capability of these models. We observe that all sparsity
+    regularization techniques improve extrapolation over unregularized NODEs. Figure 4 qualitatively
+    illustrates the reconstruction and extrapolation performance of both the baseline and PathReg for
+    the walking dataset (visually, the results are similar to PathReg for other regularizers). While these
+    models perform well for extrapolation and generalization to unseen data, we show that only PathReg
+    and C-NODE are able to avoid using spurious features for forecasting. Figures 7 and 8 in Appendix C
+    show that PathReg and C-NODE learn sensible and arguably correct adjacency matrices (derived
+    from joint connectedness), whereas L0 and LassoNet fail to sparsify the input-output interactions
+    appropriately (more details in Appendix C.2). Since we use second-order NODEs for this dataset, the
+    adjacency matrix described in Section 3.3 represents how the acceleration predicted by $f_{\theta}$ of each
+    joint point (e.g., $X_i$) depends on the positions as well as the velocities of other joint points (e.g., $X_j$ ).
+    In case the dependency is non-constant, we infer that the joint point $X_i$
+    interacts with $X_j$
+
+\section{Conclusion and discussion}
+We have shown the efficacy of various sparsity enforcing techniques on generalization of continuousdepth NODEs and proposed PathReg, a regularizer acting directly on entire paths throughout a
+neural network and achieving exact zeros. We curate real-world datasets from different domains
+consisting of human motion capture and single-cell RNA-seq data. Our findings demonstrate that
+sparsity improves out-of-distribution generalization (for the types of OOD considered) of NODEs
+when our objective is system identification from observational data, extrapolation of a trajectory,
+or real-world generalization to unseen biological datasets collected from diverse donors. Finally,
+we show that unlike weight sparsity, feature sparsity as enforced by PathReg can indeed help
+in identifying the underlying dynamical laws instead of merely achieving strong in-distribution
+predictive performance. This is particularly relevant for applications like gene-regulatory network
+inference, where the ultimate goal is not prediction and forecasting, but revealing the true underlying
+regulatory interactions between genes of interest. We hope that our empirical findings as well as
+curated datasets can serve as useful benchmarks to a broader community and expect that extensions of
+our framework to incorporate both observational and experimental data will further improve practical
+system identification for ODEs. Finally, our path-based regularization technique may be of interest to
+other communities that aim at enforcing various types of shape constraints or allowed dependencies
+into deep learning based models
+\section*{Acknowledgments and Disclosure of Funding}
+We thank Ronan Le Gleut from the Core Facility Statistical Consulting at Helmholtz Munich for
+the statistical support. HA and FJT acknowledge support by the BMBF (grant 01IS18036B) and the
+Helmholtz Association’s Initiative and Networking Fund through Helmholtz AI (grant ZT-I-PF-5-01)
+and CausalCellDynamics (grant Interlabs-0029). TR is supported by the Helmholtz Association under
+the joint research school "Munich School for Data Science" - MUDS. NK was funded by Helmholtz
+Association’s Initiative and Networking Fund through Helmholtz AI. FJT reports receiving consulting
+fees from Roche Diagnostics GmbH and ImmunAI, and ownership interest in Cellarity, Inc. and
+Dermagnostix. The remaining authors declare no competing interests.
+
+\printbibliography
+
+\end{document}
